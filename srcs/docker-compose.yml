@@ -1,18 +1,61 @@
-version: "3.8"
-
 services:
-  nginx:
-    build: requirements/nginx/.
-    container_name: nginx
-    ports:
-       - "80:80"
-    volumes:
-       - ./web:/var/www/html
-  wordpress:
-    build: requirements/wordpress/.
-    container_name: wp-php
-    volumes:
-       - ./web:/var/www/html
   mariadb:
-    build: requirements/mariadb/.
+    env_file: ".env"
+    build:
+      context: ./requirements/mariadb  # On build à partir de ton Dockerfile
     container_name: mariadb
+    expose:
+      - "3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - wordpress-network
+    restart: always
+
+  wordpress:
+    env_file: ".env"
+    build:
+      context: ./requirements/wordpress
+    container_name: wordpress
+    depends_on:
+      - mariadb
+    expose:
+      - "9000"
+    volumes:
+      - wordpress_data:/var/www/html
+    networks:
+      - wordpress-network
+    restart: always
+
+  nginx:
+    env_file: ".env"
+    build:
+      context: ./requirements/nginx
+    container_name: nginx
+    depends_on:
+      - wordpress
+    ports:
+      - "443:443"
+    volumes:
+      - wordpress_data:/var/www/html
+
+    networks:
+      - wordpress-network
+    restart: always
+
+networks:
+  wordpress-network:
+    name : wordpress-network
+    driver: bridge
+
+volumes:
+  wordpress_data:
+    driver_opts:
+      type: none
+      device: /home/dravaono/data/wordpress
+      o: bind
+  mariadb_data:
+    driver_opts:
+      type: none
+      device: /home/dravaono/data/mariadb
+      o: bind

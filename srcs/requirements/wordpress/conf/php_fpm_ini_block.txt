@@ -1,0 +1,10 @@
+
+; added for inception
+clear_env = no
+
+;listen = nginx:9000 or direct ip adress don't work
+
+; For IPv6
+listen = [::]:9000  
+
+listen = 0.0.0.0:9000
