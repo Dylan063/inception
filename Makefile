@@ -6,7 +6,7 @@ all:
 	sudo chown -R www-data:www-data /home/dravaono/data/wordpress
 	sudo chmod -R 755 /home/dravaono/data/wordpress
 	sudo chmod -R 755 /home/dravaono/data/mariadb
-	cd srcs && docker compose up --build
+	cd srcs && docker compose up -d --build
 
 clean:
 	cd srcs && docker compose down

@@ -1,77 +1,99 @@
 #!/bin/bash
 
-# this script can be recall without problem if the root password haven't change
-
-# 'set -eu' present for : exit on errors (-e), on unset variables (-u), and print commands before executing (-x).
-# No -x because it show to mutch .env variables
+# Exit on errors and unset variables
 set -eu
 
-# Start MariaDB service
-# It can show "ERROR 1045 (28000): Access denied for user 'root'@'localhost' (using password: NO)" but start anyway (> /dev/null 2>&1 hide it),
-# didn't use 'mariadbd-safe &' to avoid running background program even if it gonna be close at the end
-service mariadb start > /dev/null 2>&1
+# Function to check if MariaDB is available
+wait_for_mariadb() {
+    echo "Waiting for MariaDB to be ready..."
+    
+    for i in $(seq 1 30); do
+        if mysqladmin ping -h mariadb -u ${MYSQL_USER} -p${MYSQL_PASSWORD} &>/dev/null; then
+            echo "MariaDB is ready!"
+            return 0
+        fi
+        echo "Attempt $i/30: MariaDB not ready yet, waiting..."
+        sleep 2
+    done
+    
+    echo "Failed to connect to MariaDB after 30 attempts"
+    return 1
+}
 
-# Wait for MariaDB service (mariadb-admin eq. to mysqladmin)
-# Can maybe be remove because mariadb start have a wait build in
-ready=false
-for attempt in {1..10}; do
-  if mariadb-admin -u root --password=${MYSQL_ROOT_PASSWORD} ping >/dev/null 2>&1; then
-    ready=true
-    break
-  fi
-  echo "(1s), attempt ($attempt/10), Waiting for MariaDB to be ready..."
-  sleep 1
-done
-if [ "$ready" = true ]; then
-  echo "MariaDB configuration script successfully start."
+# Check if WordPress is already installed
+if [ -e "./wordpress/wp-config.php" ]; then
+    echo "WordPress is already configured"
 else
-  echo "Failed to connect to MariaDB after 10 attempts."
-  exit 1
+    # Wait for MariaDB to be ready before proceeding
+    wait_for_mariadb
+
+    # Download and extract WordPress if not already present
+    if [ ! -d "./wordpress" ]; then
+        echo "Downloading and installing WordPress..."
+        wget --quiet https://fr.wordpress.org/wordpress-6.6.1-fr_FR.tar.gz
+        tar xzf wordpress-6.6.1-fr_FR.tar.gz
+        rm wordpress-6.6.1-fr_FR.tar.gz
+    fi
+
+    # Set correct permissions
+    chmod -R 755 /var/www/html
+    chown -R www-data:www-data /var/www/html
 fi
 
-# This part combine mariadb-secure-installation with requirement from inception subject (mariadb eq. to mysql)
-# -s silent, -f force the command to execute even if there are errors, -e executed directly from the command line
-mariadb -u root --password=${MYSQL_ROOT_PASSWORD} -sfe "
-  CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
-  ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}';
-  GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION;
-
-  -- Delete remote 'root' capabilities
-  DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-
-  -- Delete anonymous users
-  DELETE FROM mysql.user WHERE User='';
-
-  -- Drop database 'test'
-  DROP DATABASE IF EXISTS test;
-  -- Remove lingering permissions to the 'test' database
-  DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-
-  CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
-  ALTER USER '${MYSQL_USER}'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
-
-  CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE};
-  GRANT ALL PRIVILEGES ON ${MYSQL_DATABASE}.* TO '${MYSQL_USER}'@'%';
-  
-  FLUSH PRIVILEGES;
-"
-
-# Add a sleep to avoid mysqladmin "ERROR 2002 (HY000): Can't connect to local MySQL server through socket '/run/mysqld/mysqld.sock' (2)"
-sleep 1
-ready=false
-for attempt in {1..10}; do
-  if mariadb-admin -u root --password=${MYSQL_ROOT_PASSWORD} shutdown >/dev/null 2>&1; then
-    ready=true
-    break
-  fi
-  echo "(1s) Attempt ($attempt/10) to shutdown MariaDB configuration script..."
-  sleep 1
-done
-if [ "$ready" = true ]; then
-  echo "MariaDB configuration script successfully shutdown."
-else
-  echo "Failed to shutdown MariaDB configuration script after 10 attempts."
-  exit 2
+# Install WP-CLI if not already installed
+if [ ! -e "/usr/local/bin/wp" ]; then
+    echo "Installing WP-CLI..."
+    wget --quiet https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    chmod +x wp-cli.phar
+    mv wp-cli.phar /usr/local/bin/wp
 fi
 
+# Create wp-config.php if not exists
+if [ ! -e "./wordpress/wp-config.php" ]; then
+    echo "Creating wp-config.php..."
+    # Temporarily disable trace output for sensitive information
+    { set +x; } 2>/dev/null
+    
+    wp --allow-root config create \
+        --dbname=${MYSQL_DATABASE} \
+        --dbuser=${MYSQL_USER} \
+        --dbpass=${MYSQL_PASSWORD} \
+        --dbhost=mariadb:3306 \
+        --path='/var/www/html/wordpress'
+
+    # Install WordPress
+    wp --allow-root core install \
+        --url="https://${DOMAIN_NAME}" \
+        --title="${WORDPRESS_SITE_TITLE}" \
+        --admin_user=${WORDPRESS_ADMIN_NAME} \
+        --admin_email=${WORDPRESS_ADMIN_EMAIL} \
+        --admin_password=${WORDPRESS_ADMIN_PASS} \
+        --path='/var/www/html/wordpress'
+
+    # Create additional user
+    wp --allow-root user create \
+        ${WORDPRESS_USER_NAME} ${WORDPRESS_USER_EMAIL} \
+        --user_pass=${WORDPRESS_USER_PASS} \
+        --role=subscriber \
+        --path='/var/www/html/wordpress'
+    
+    # Re-enable trace output
+    set -x
+fi
+
+# Configure PHP-FPM
+if grep -q "listen = 0.0.0.0:9000" /etc/php/7.4/fpm/pool.d/www.conf; then
+    echo "PHP-FPM already configured."
+else
+    echo "Configuring PHP-FPM..."
+    sed -i '5r /docker-entrypoint.d/php_fpm_ini_block.txt' /etc/php/7.4/fpm/pool.d/www.conf
+fi
+
+# Fix port 9000 communication
+sed -i '/listen = \/run\/php\/php7.4-fpm.sock/d' /etc/php/7.4/fpm/pool.d/www.conf
+mkdir -p /run/php
+
+echo "WordPress setup complete!"
+
+# Execute the command passed to the script
 exec "$@"
