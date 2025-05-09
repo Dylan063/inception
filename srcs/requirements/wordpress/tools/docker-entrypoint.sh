@@ -46,12 +46,12 @@ else
 
     # Install WordPress
     wp --allow-root core install \
-        --url="https://${DOMAIN_NAME}" \
-        --title="${WORDPRESS_SITE_TITLE}" \
-        --admin_user=${WORDPRESS_ADMIN_NAME} \
-        --admin_email=${WORDPRESS_ADMIN_EMAIL} \
-        --admin_password=${WORDPRESS_ADMIN_PASS} \
-        --path='/var/www/html/wordpress'
+   	--url="https://${DOMAIN_NAME}" \
+    	--title="${WORDPRESS_SITE_TITLE}" \
+    	--admin_user=${WORDPRESS_ADMIN_NAME} \
+    	--admin_email=${WORDPRESS_ADMIN_EMAIL} \
+    	--admin_password=${WORDPRESS_ADMIN_PASS} \
+    	--path='/var/www/html/wordpress'
 
     # Create additional user
     wp --allow-root user create \

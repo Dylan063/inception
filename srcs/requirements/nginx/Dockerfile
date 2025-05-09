@@ -1,6 +1,6 @@
 FROM debian:bullseye
 
-RUN apt-get update && apt-get install -y nginx openssl netcat-openbsd
+RUN apt-get update && apt-get install -y nginx openssl
 
 RUN mkdir -p /etc/nginx/ssl
 
@@ -13,7 +13,7 @@ COPY tools/script.sh /script.sh
 RUN chmod -R 755 /var/www
 RUN chown -R www-data:www-data /var/www
 
-EXPOSE 443
+EXPOSE 9000
 
 STOPSIGNAL SIGQUIT
 
